@@ -128,9 +128,12 @@ function readOfsDelta(pack, offset) {
     return { value: n, end: p };
 }
 
-// Pack content is accessed via File.slice() on-demand. `pack` is a { file, packId } object;
-// we slice out exactly [offset, end) per request. Memory use stays bounded — we never hold
-// multi-hundred-MB pack buffers in RAM.
+// Pack content access. Three modes, tried in order:
+//   1. pack.trimmedBytes (Map<offset, Uint8Array>) — only commit/tag/delta-chain bytes;
+//      populated after extractInterestingBytes() dropped the full pack buffer. Most repos.
+//   2. pack.bytes (Uint8Array) — full pack in memory, slice on demand. Never hit in the
+//      common path unless trimming was skipped.
+//   3. pack.getFile() — streaming fallback when whole-file read failed.
 export async function readObjectAt(pack, offset, ctx) {
     const cache = ctx.cache;
     const cacheKey = pack.packId + ':' + offset;
@@ -141,10 +144,17 @@ export async function readObjectAt(pack, offset, ctx) {
     const objEnd = ctx.endOf.get(offset);
     if (objEnd === undefined) throw new Error(`No end bound known for offset ${offset}`);
 
-    // Grab only the bytes for this one object (typically <1KB for commits).
-    const sliceBytes = new Uint8Array(
-        await pack.file.slice(offset, objEnd).arrayBuffer()
-    );
+    let sliceBytes;
+    if (pack.trimmedBytes && pack.trimmedBytes.has(offset)) {
+        sliceBytes = pack.trimmedBytes.get(offset);
+    } else if (pack.bytes) {
+        sliceBytes = pack.bytes.subarray(offset, objEnd);
+    } else {
+        const file = await pack.getFile();
+        sliceBytes = new Uint8Array(
+            await file.slice(offset, objEnd).arrayBuffer()
+        );
+    }
     const hdr = readObjectHeader(sliceBytes, 0);
     const typeName = OBJ_TYPE[hdr.type];
     if (!typeName) throw new Error(`Unknown object type ${hdr.type} at offset ${offset}`);
@@ -331,15 +341,90 @@ export async function readAllRefs(fs, gitdir) {
     return { refs, tips };
 }
 
+// After loading a full pack buffer, walk the idx offsets and classify each object.
+// Anything that's a commit, tag, or delta-chain that ultimately resolves to one of those,
+// we copy into a slim Map<offset, Uint8Array>. Everything else (trees, blobs — the bulk of
+// a pack) is discarded. For typical source repos this shrinks ~880MB down to a few MB.
+//
+// Delta-chain logic: OFS_DELTA stores offset_from_current; REF_DELTA stores base oid. We
+// follow until we hit a non-delta object and keep if that's commit or tag.
+function extractInterestingBytes(packBytes, oidToOffset, endOf) {
+    // Pass 1: classify each object's immediate shape.
+    // meta[offset] = { type, baseOffset? , baseOid? }
+    const meta = new Map();
+    for (const offset of oidToOffset.values()) {
+        try {
+            const hdr = readObjectHeader(packBytes, offset);
+            const entry = { type: hdr.type };
+            if (hdr.type === 6) { // OFS_DELTA
+                const { value: rel } = readOfsDelta(packBytes, hdr.headerEnd);
+                entry.baseOffset = offset - rel;
+            } else if (hdr.type === 7) { // REF_DELTA
+                entry.baseOid = bytesToHex(packBytes.subarray(hdr.headerEnd, hdr.headerEnd + 20));
+            }
+            meta.set(offset, entry);
+        } catch (_) {
+            meta.set(offset, { type: -1 });
+        }
+    }
+
+    // Pass 2: resolve which offsets ultimately produce commits or tags. Memoized.
+    const verdict = new Map(); // offset → bool (keep or not)
+    function resolves(offset, visited) {
+        if (verdict.has(offset)) return verdict.get(offset);
+        if (visited.has(offset)) return false; // cycle guard
+        visited.add(offset);
+        const m = meta.get(offset);
+        if (!m) { verdict.set(offset, false); return false; }
+        let v;
+        if (m.type === 1 || m.type === 4) v = true;       // commit or tag
+        else if (m.type === 2 || m.type === 3) v = false; // tree or blob
+        else if (m.type === 6) v = resolves(m.baseOffset, visited);
+        else if (m.type === 7) {
+            const baseOff = oidToOffset.get(m.baseOid);
+            v = baseOff !== undefined ? resolves(baseOff, visited) : true; // assume keep if cross-pack
+        } else v = false;
+        verdict.set(offset, v);
+        return v;
+    }
+    for (const offset of oidToOffset.values()) resolves(offset, new Set());
+
+    // Pass 3: copy just the kept bytes into a fresh Map. slice() produces a copy so the
+    // original pack buffer can be freed. We also include all delta ancestors of each kept
+    // object (we need them to resolve deltas) — many are already in keep set, but some
+    // non-commit bases of commit deltas aren't classified as commits themselves.
+    const trimmed = new Map();
+    const addWithAncestors = (offset, seen) => {
+        if (trimmed.has(offset) || seen.has(offset)) return;
+        seen.add(offset);
+        const end = endOf.get(offset);
+        if (end === undefined) return;
+        // slice() copies; subarray would keep the whole buffer alive.
+        trimmed.set(offset, packBytes.slice(offset, end));
+        const m = meta.get(offset);
+        if (!m) return;
+        if (m.type === 6) addWithAncestors(m.baseOffset, seen);
+        else if (m.type === 7) {
+            const baseOff = oidToOffset.get(m.baseOid);
+            if (baseOff !== undefined) addWithAncestors(baseOff, seen);
+        }
+    };
+    for (const offset of oidToOffset.values()) {
+        if (verdict.get(offset)) addWithAncestors(offset, new Set());
+    }
+    return trimmed;
+}
+
 // -------- Load all pack indexes + pack File handles --------
 // Indexes are read into memory (they're small). Pack content is kept as a File reference
 // and sliced per-object inside readObjectAt — we never hold a 500MB pack in RAM.
-export async function loadPacks(fs, gitdir) {
+export async function loadPacks(fs, gitdir, onProgress) {
     const packDir = `${gitdir}/objects/pack`;
     let entries = [];
-    try { entries = await fs.readdir(packDir); } catch (_) { return { oidToPack: new Map(), packs: [] }; }
+    try { entries = await fs.readdir(packDir); } catch (_) { return { oidToPack: new Map(), packs: [], failed: [] }; }
     const oidToPack = new Map();
     const packs = [];
+    const failed = [];
     let packId = 0;
     for (const name of entries) {
         if (!name.endsWith('.idx')) continue;
@@ -347,29 +432,86 @@ export async function loadPacks(fs, gitdir) {
         const idxPath = `${packDir}/${name}`;
         const packPath = `${packDir}/${base}.pack`;
         try {
-            const [idxBuf, packFile] = await Promise.all([
-                fs.readFile(idxPath),
-                fs.getFile(packPath)
-            ]);
+            // Read idx (with retries). idx is small; we always need it.
+            let idxBuf = null, fh = null;
+            for (let attempt = 0; attempt < 3; attempt++) {
+                try {
+                    idxBuf = await fs.readFile(idxPath);
+                    fh = await fs.getFileHandle(packPath);
+                    break;
+                } catch (e) {
+                    if (attempt === 2) throw e;
+                    if (typeof fs.invalidate === 'function') {
+                        fs.invalidate(idxPath);
+                        fs.invalidate(packPath);
+                    }
+                    await new Promise(r => setTimeout(r, 150));
+                }
+            }
+            const sizeProbe = await fh.getFile();
             const { oidToOffset } = parseIdx(idxBuf);
+            // Free the idx buffer from the adapter cache — we've extracted everything we
+            // need into oidToOffset, and the idx bytes (up to a few MB each) would
+            // otherwise sit in memory for the life of the walk.
+            if (typeof fs.invalidate === 'function') fs.invalidate(idxPath);
             const offsets = [...oidToOffset.values()].sort((a, b) => a - b);
             const endOf = new Map();
-            const packEnd = packFile.size - 20;
+            const packEnd = sizeProbe.size - 20;
             for (let i = 0; i < offsets.length; i++) {
                 const nextEnd = i + 1 < offsets.length ? offsets[i + 1] : packEnd;
                 endOf.set(offsets[i], nextEnd);
             }
             const thisPackId = packId++;
-            const packRef = { file: packFile, packId: thisPackId, endOf };
+            // Try to read the whole pack into memory, then immediately extract just the
+            // commit/tag bytes and drop the full buffer. For a typical repo this cuts
+            // memory to ~1–5% of the pack size (the rest is trees + blobs we never need).
+            let packBytes = null;
+            let trimmedBytes = null;
+            try {
+                const probeFile = await fh.getFile();
+                packBytes = new Uint8Array(await probeFile.arrayBuffer());
+                const origSize = packBytes.length;
+                trimmedBytes = extractInterestingBytes(packBytes, oidToOffset, endOf);
+                let trimmedSize = 0;
+                for (const b of trimmedBytes.values()) trimmedSize += b.length;
+                packBytes = null; // let the full buffer GC
+                if (onProgress) {
+                    onProgress(`Trimmed pack ${base.slice(5, 13)}…: ` +
+                        `${(origSize / 1048576).toFixed(1)}MB → ${(trimmedSize / 1048576).toFixed(2)}MB ` +
+                        `(${trimmedBytes.size} commit-ish objects)`);
+                }
+            } catch (e) {
+                console.warn('whole-pack read failed, falling back to streaming', base, e.message || e);
+                if (onProgress) onProgress(`Streaming pack ${base.slice(5, 13)}… (couldn't load whole)`);
+            }
+
+            let currentFh = fh;
+            const getFreshFile = async () => {
+                try { return await currentFh.getFile(); }
+                catch (e) {
+                    if (fs.getFileHandle) {
+                        currentFh = await fs.getFileHandle(packPath);
+                        return currentFh.getFile();
+                    }
+                    throw e;
+                }
+            };
+            // Prefer trimmed bytes; fall back to streaming for any object we didn't keep
+            // (e.g. a commit that delta-chains to a non-kept base across packs).
+            const packRef = trimmedBytes
+                ? { trimmedBytes, getFile: getFreshFile, packId: thisPackId, endOf }
+                : { getFile: getFreshFile, packId: thisPackId, endOf };
             for (const [oid, off] of oidToOffset) {
-                oidToPack.set(oid, { file: packFile, offset: off, endOf, packId: thisPackId });
+                oidToPack.set(oid, { ...packRef, offset: off });
             }
             packs.push(packRef);
         } catch (e) {
-            console.warn('pack load failed', name, e);
+            console.warn('pack load failed', name, e.message || e);
+            failed.push(name);
+            if (onProgress) onProgress(`Skipped pack ${name.slice(5, 13)}… (unreadable); continuing`);
         }
     }
-    return { oidToPack, packs };
+    return { oidToPack, packs, failed };
 }
 
 // -------- Fast commit walk --------
@@ -379,7 +521,10 @@ export async function fastWalk({ fs, gitdir, onProgress = () => {}, maxCommits =
     const { refs, tips } = await readAllRefs(fs, gitdir);
 
     onProgress('Loading pack indexes…');
-    const { oidToPack } = await loadPacks(fs, gitdir);
+    const { oidToPack, failed } = await loadPacks(fs, gitdir, onProgress);
+    if (failed && failed.length) {
+        onProgress(`${failed.length} pack${failed.length === 1 ? '' : 's'} unreadable — history may be incomplete. Use the git-log one-liner for a full walk.`);
+    }
 
     const commits = new Map();      // oid → parsed commit
     const dereffed = new Set();     // oids we've attempted, to short-circuit
@@ -390,15 +535,31 @@ export async function fastWalk({ fs, gitdir, onProgress = () => {}, maxCommits =
 
     const CONCURRENCY = 16;
 
+    const stats = { packReads: 0, packFails: 0, looseReads: 0, looseFails: 0 };
+
     const resolveOne = async (oid) => {
         const entry = oidToPack.get(oid);
         if (entry) {
-            return readObjectAt(entry, entry.offset, {
-                oidToPack, cache: decodeCache, endOf: entry.endOf
-            });
+            try {
+                const r = await readObjectAt(entry, entry.offset, {
+                    oidToPack, cache: decodeCache, endOf: entry.endOf
+                });
+                stats.packReads++;
+                return r;
+            } catch (e) {
+                stats.packFails++;
+                // Fall through to loose object read — the oid might also exist loose.
+                if (stats.packFails <= 3) console.warn('pack read fail', oid, e.message);
+            }
         }
-        try { return await readLooseObject(fs, gitdir, oid); }
-        catch (_) { return null; }
+        try {
+            const r = await readLooseObject(fs, gitdir, oid);
+            stats.looseReads++;
+            return r;
+        } catch (_) {
+            stats.looseFails++;
+            return null;
+        }
     };
 
     while (queue.length && commits.size < maxCommits) {
@@ -443,6 +604,9 @@ export async function fastWalk({ fs, gitdir, onProgress = () => {}, maxCommits =
 
     const elapsedTotal = ((performance.now() - t0) / 1000).toFixed(1);
     onProgress(`Walked ${commits.size} commits in ${elapsedTotal}s.`);
+    console.log(`[gitpack] commits=${commits.size} packReads=${stats.packReads} ` +
+                `packFails=${stats.packFails} looseReads=${stats.looseReads} ` +
+                `looseFails=${stats.looseFails} dereffed=${dereffed.size}`);
 
     const out = [];
     for (const { oid, commit } of commits.values()) {

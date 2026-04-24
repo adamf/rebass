@@ -333,8 +333,9 @@ export class MusicPlayer {
             accelerate = 0,
             voiceOctaves, voiceMuted,
             drumMuted = false,
-            drumPattern = null,
-            bassPattern = null,
+            drumPatterns = null,   // array of variants; rotated every 8 bars
+            bassPatterns = null,
+            repoSeed = 0,
             branchMotifs = true,
             commitsPerBar = 1,
             startFromCommit = 0
@@ -397,7 +398,11 @@ export class MusicPlayer {
         // Stash everything the rolling scheduler needs.
         this._scheduleCtx = {
             now, fullOrder, startTimes, commitDur, cpb, key, scaleName,
-            oct, mute, maxLane, drumPattern, drumMuted, bassPattern, branchMotifs,
+            oct, mute, maxLane, drumMuted,
+            drumPatterns: drumPatterns || [null],
+            bassPatterns: bassPatterns || [null],
+            repoSeed: Math.abs(repoSeed | 0),
+            branchMotifs,
             laneOpenPlayIdx, laneClosePlayIdx,
             N
         };
@@ -440,9 +445,17 @@ export class MusicPlayer {
         if (!ctx) return;
         const {
             now, fullOrder, startTimes, commitDur, cpb, key, scaleName, oct, mute,
-            maxLane, drumPattern, drumMuted, bassPattern, branchMotifs,
+            maxLane, drumPatterns, drumMuted, bassPatterns, repoSeed, branchMotifs,
             laneOpenPlayIdx, laneClosePlayIdx, N
         } = ctx;
+
+        // Rotate pattern variants every 8 bars so the feel evolves over the song. Different
+        // seeds (repo SHA + voice offset) for drums and bass so they don't always shift
+        // together — gives a more organic progression.
+        const barIdxAbs = Math.floor((barStart - this.startFromCommit) / cpb);
+        const phraseIdx = Math.floor(barIdxAbs / 8);
+        const drumPattern = drumPatterns[(repoSeed + phraseIdx) % drumPatterns.length] || null;
+        const bassPattern = bassPatterns[(repoSeed + phraseIdx * 3 + 1) % bassPatterns.length] || null;
         const barEnd = Math.min(N, barStart + cpb);
         const m0 = commitToMusic(fullOrder[barStart]);
         const tBarStart = now + startTimes[barStart];
@@ -518,10 +531,15 @@ export class MusicPlayer {
                 const pan = Math.max(-0.9, Math.min(0.9, lanePan + m.panHint));
                 this._schedulePan(this.voiceChains, 'lead', pan, t0);
                 const notesInCommit = cpb >= 4 ? 1 : Math.min(m.density, Math.max(1, Math.floor(4 / cpb)));
-                // All notes within a single commit stay in the same octave — previously the
-                // 3rd/4th notes jumped up an octave, which made bursts of dense commits feel
-                // like a perpetual ascending climb. Variety now comes from degree, not octave.
-                const degrees = [m.degree, m.thirdStep + m.leadWobble, m.fifthStep, m.degree - 2];
+                // Keep lead strictly within one octave. In a 5-note pentatonic scale, any
+                // degree ≥ 5 wraps up an octave — so cap degrees at the pentatonic length.
+                const wrap5 = (d) => ((d % 5) + 5) % 5;
+                const degrees = [
+                    wrap5(m.degree),
+                    wrap5(m.thirdStep + m.leadWobble),
+                    wrap5(m.fifthStep),
+                    wrap5(m.degree - 2)
+                ];
                 for (let k = 0; k < notesInCommit; k++) {
                     const slotOffset = k * (dur / notesInCommit);
                     const deg = degrees[k % degrees.length];
@@ -537,15 +555,17 @@ export class MusicPlayer {
             }
 
             if (bell && !mute.bell && m.accent) {
+                // Same octave containment as lead — bell voices tend to be in oct 5 already
+                // where any octave wrap hits painful highs.
+                const wrap5 = (d) => ((d % 5) + 5) % 5;
                 try {
                     bell.start({
-                        note: noteAt(key.root, scaleName, m.fifthStep, oct.bell),
+                        note: noteAt(key.root, scaleName, wrap5(m.fifthStep), oct.bell),
                         time: t0, duration: Math.max(0.4, dur * 3), velocity: 95
                     });
                     if (m.isMerge) {
-                        // Was oct.bell + 1 — already piercing at bell octaves; keep same octave.
                         bell.start({
-                            note: noteAt(key.root, scaleName, m.degree, oct.bell),
+                            note: noteAt(key.root, scaleName, wrap5(m.degree), oct.bell),
                             time: t0 + dur * 0.3,
                             duration: Math.max(0.3, dur * 2.5),
                             velocity: 85

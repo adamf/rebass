@@ -16,16 +16,23 @@ const PATTERNS = {
     hardTechno: [
         {
             kick:  [110,0,0,0, 110,0,0,0, 110,0,0,0, 110,0,0,0],
-            snare: [0,0,0,0,   0,0,0,0,   0,0,0,0,   0,0,0,0  ],
             hat:   [0,0,60,0,  0,0,60,0,  0,0,60,0,  0,0,60,0 ],
             open:  [0,0,0,0,   0,0,0,0,   0,0,0,0,   0,0,80,0 ]
         },
         { // With 2-and-4 clap accents and an extra kick on the "&" of 3.
             kick:  [110,0,0,0, 110,0,0,0, 110,0,90,0, 110,0,0,0],
-            snare: [0,0,0,0,   0,0,0,0,   0,0,0,0,   0,0,0,0  ],
             clap:  [0,0,0,0,   85,0,0,0,  0,0,0,0,   85,0,0,0 ],
             hat:   [0,0,65,0,  0,0,65,0,  0,0,65,0,  0,0,65,0 ],
             open:  [0,0,0,0,   0,0,0,0,   0,0,0,0,   0,0,85,0 ]
+        },
+        { // Stripped — just kick + sparse hat. Breakdown feel.
+            kick:  [110,0,0,0, 110,0,0,0, 110,0,0,0, 110,0,0,0],
+            hat:   [0,0,0,0,   0,0,0,0,   0,0,60,0,  0,0,60,0 ]
+        },
+        { // Rolling sixteenth-note hats — driving, tense section.
+            kick:  [110,0,0,0, 110,0,0,0, 110,0,0,0, 110,0,0,0],
+            hat:   [55,55,55,55, 55,55,55,55, 55,55,55,55, 55,55,55,55],
+            clap:  [0,0,0,0,   85,0,0,0,  0,0,0,0,   85,0,0,0 ]
         }
     ],
 
@@ -37,19 +44,28 @@ const PATTERNS = {
             clap:  [0,0,0,0,   85,0,0,0,  0,0,0,0,   85,0,0,0 ],
             hat:   [0,60,0,60, 0,60,0,60, 0,60,0,60, 0,60,0,60]
         },
-        { // With a "tail kick" before beat-1 fills and an open-hat lift.
+        { // "Tail kick" before beat-1 and open-hat lift.
             kick:  [115,0,0,0, 115,0,0,0, 115,0,0,0, 115,0,0,90],
             snare: [0,0,0,0,   95,0,0,0,  0,0,0,0,   95,0,0,0 ],
             clap:  [0,0,0,0,   90,0,0,0,  0,0,0,0,   90,0,0,0 ],
             hat:   [0,60,0,60, 0,60,0,60, 0,60,0,60, 0,60,0,0 ],
             open:  [0,0,0,0,   0,0,0,0,   0,0,0,0,   0,0,0,85 ]
+        },
+        { // Breakdown — no kick, just hats + clap on 2&4.
+            clap:  [0,0,0,0,   85,0,0,0,  0,0,0,0,   85,0,0,0 ],
+            hat:   [0,60,0,60, 0,60,0,60, 0,60,0,60, 0,60,0,60]
+        },
+        { // Rolling 16th-note hats, double-clap on 2&4 (build-up).
+            kick:  [115,0,0,0, 115,0,0,0, 115,0,0,0, 115,0,0,0],
+            clap:  [0,0,0,0,   90,0,90,0, 0,0,0,0,   90,0,90,0],
+            hat:   [60,60,60,60, 60,60,60,60, 60,60,60,60, 60,60,60,60]
         }
     ],
 
     // Jungle / DnB — amen-break-inspired syncopation. No four-on-floor; kick scattered, snare
     // on 2 and 4 plus breakbeat ghost on the "&" before 4. Fast 16th-note hats.
     jungle: [
-        {
+        { // Classic amen-ish break
             kick:  [105,0,0,0, 0,0,95,0,  0,0,0,0,   0,0,90,0 ],
             snare: [0,0,0,0,   100,0,0,0, 0,0,0,80,  100,0,0,0],
             hat:   [55,55,55,55, 55,55,55,55, 55,55,55,55, 55,55,55,55]
@@ -58,17 +74,39 @@ const PATTERNS = {
             kick:  [105,0,0,0, 0,0,90,0,  0,0,85,0,  0,0,90,0 ],
             snare: [0,0,0,0,   100,0,0,0, 0,0,75,70, 95,0,0,60],
             hat:   [55,55,55,55, 55,55,55,55, 55,55,55,55, 55,55,55,55]
+        },
+        { // "Half-time" DnB feel — kick 1+3, snare on 3 only, sparse hats.
+            kick:  [105,0,0,0, 0,0,0,0,   0,0,85,0,  0,0,0,0  ],
+            snare: [0,0,0,0,   0,0,0,0,   100,0,0,0, 0,0,0,0  ],
+            hat:   [55,0,55,0, 55,0,55,0, 55,0,55,0, 55,0,55,0]
+        },
+        { // Liquid DnB — softer dynamics, stepping hi-hat.
+            kick:  [95,0,0,0,  0,0,80,0,  0,0,0,0,   0,0,85,0 ],
+            snare: [0,0,0,0,   90,0,0,0,  0,0,0,0,   85,0,0,0 ],
+            hat:   [50,0,55,0, 50,0,55,0, 50,0,55,0, 50,0,55,0]
         }
     ],
 
     // Jazz — light kick on 1 and 3 (in feathery dynamics), snare on 2 and 4, ride pattern.
     // We approximate "swung 8ths" by shifting the offbeat hats slightly stronger on the &.
     jazz: [
-        {
+        { // Medium swing (ding-ding-da-ding ride)
             kick:  [70,0,0,0,  0,0,0,0,   65,0,0,0,  0,0,0,0  ],
             snare: [0,0,0,0,   50,0,0,0,  0,0,0,0,   55,0,0,0 ],
             ride:  [70,0,55,0, 65,0,55,0, 70,0,55,0, 65,0,55,0],
             hat:   [70,0,55,0, 65,0,55,0, 70,0,55,0, 65,0,55,0]
+        },
+        { // Faster swing with snare comping on off-beats
+            kick:  [65,0,0,0,  0,0,0,0,   60,0,0,0,  0,0,0,0  ],
+            snare: [0,0,45,0,  50,0,0,0,  0,0,45,0,  55,0,0,0 ],
+            ride:  [70,0,55,0, 65,0,55,45, 70,0,55,0, 65,0,55,45],
+            hat:   [0,0,0,0,   0,0,0,60,  0,0,0,0,   0,0,0,60 ]
+        },
+        { // Brush-style ballad feel — quieter
+            kick:  [55,0,0,0,  0,0,0,0,   50,0,0,0,  0,0,0,0  ],
+            snare: [0,0,0,0,   40,0,0,0,  0,0,0,0,   45,0,0,0 ],
+            ride:  [55,0,45,0, 50,0,45,0, 55,0,45,0, 50,0,45,0],
+            hat:   [55,0,45,0, 50,0,45,0, 55,0,45,0, 50,0,45,0]
         }
     ],
 
@@ -79,10 +117,20 @@ const PATTERNS = {
             snare: [0,0,0,0,   100,0,0,0, 0,0,0,0,   100,0,0,0],
             hat:   [70,0,70,0, 70,0,70,0, 70,0,70,0, 70,0,70,0]
         },
-        { // With an 8th-note ghost kick before the snare on beat 4 (rock "gallop").
+        { // Gallop — 8th-note ghost kick before beat-4 snare.
             kick:  [105,0,0,0, 0,0,0,0,   105,0,0,0, 0,0,80,0 ],
             snare: [0,0,0,0,   100,0,0,0, 0,0,0,0,   100,0,0,0],
             hat:   [70,0,70,0, 70,0,70,0, 70,0,70,0, 70,0,70,0]
+        },
+        { // Half-time — big snare on 3, sparser feel.
+            kick:  [105,0,0,0, 0,0,0,0,   0,0,0,0,   0,0,0,0  ],
+            snare: [0,0,0,0,   0,0,0,0,   100,0,0,0, 0,0,0,0  ],
+            hat:   [70,0,70,0, 70,0,70,0, 70,0,70,0, 70,0,70,0]
+        },
+        { // Driving 16th-note shuffle.
+            kick:  [105,0,0,0, 0,0,0,0,   105,0,0,0, 0,0,0,0  ],
+            snare: [0,0,0,0,   100,0,0,0, 0,0,0,0,   100,0,0,0],
+            hat:   [70,55,70,55, 70,55,70,55, 70,55,70,55, 70,55,70,55]
         }
     ],
 
@@ -289,14 +337,26 @@ export const STYLES = [
     }
 ];
 
-// Branch instrument for a given lane (>=1) within the current style. Rotates through
-// the style's pool so consecutive branches are sonically distinct.
-export function branchInstrumentForLaneInStyle(styleId, lane) {
-    if (lane <= 0) return null;
+// Pick a branch instrument by hashing the branch's opening-commit SHA. This gives more
+// variety than lane-index modulo: recycled lane slots get different instruments for each
+// branch that uses them, so you don't end up hearing "steel drums again" every time lane 1
+// reopens.
+export function branchInstrumentForBranch(styleId, seedSha) {
     const style = findStyle(styleId);
     const pool = (style && style.branchPool) || null;
     if (!pool || !pool.length) return null;
-    return pool[(lane - 1) % pool.length];
+    const s = seedSha || 'default';
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+    }
+    return pool[Math.abs(h | 0) % pool.length];
+}
+
+// Deprecated: kept for any lingering call sites. Prefer branchInstrumentForBranch.
+export function branchInstrumentForLaneInStyle(styleId, lane) {
+    return branchInstrumentForBranch(styleId, 'lane-' + lane);
 }
 
 // Pick which drum variant to use for a given repo. Stable per repo (same repo → same variant).

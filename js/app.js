@@ -14,10 +14,26 @@ import { pickLocalRepo, hasDirectoryPicker } from './localRepo.js';
 import { sampleCommits } from './sample.js';
 import {
     STYLES, findStyle, DEFAULT_STYLE, pickDrumVariant, pickBassVariant,
-    branchInstrumentForLaneInStyle
+    branchInstrumentForBranch
 } from './styles.js';
 
-const branchInstrumentFor = (lane) => branchInstrumentForLaneInStyle(state.styleId, lane);
+// Stable lane → instrument mapping for the currently loaded repo. Keyed by lane number
+// but derived by hashing each branch's opening-commit SHA, so different branches that
+// happen to share the same lane slot still get different instruments.
+function computeLaneInstruments() {
+    state.laneInstruments = {};
+    if (!state.layout || !state.layout.laneOpenPlayIdx) return;
+    const byRow = state.layout.byRow;
+    const openIdx = state.layout.laneOpenPlayIdx;
+    for (let L = 1; L < openIdx.length; L++) {
+        const row = openIdx[L];
+        if (row == null || row < 0) continue;
+        const commit = byRow[row];
+        if (!commit) continue;
+        state.laneInstruments[L] = branchInstrumentForBranch(state.styleId, commit.sha);
+    }
+}
+const branchInstrumentFor = (lane) => (state.laneInstruments && state.laneInstruments[lane]) || null;
 
 const state = {
     styleId: DEFAULT_STYLE,
@@ -312,18 +328,30 @@ async function applyStyle(styleId) {
     Object.assign(state.voiceOctave, s.voiceOctave);
     savePrefs();
     refreshMainControlsFromState();
+    computeLaneInstruments();
     if (player) {
         toast(`Loading ${s.label} instruments…`);
-        // Blow away the existing branch soundfonts — the new style has a different pool.
+        // Explicitly tear down the old branch soundfonts AND the pool cache so the next
+        // preload starts from a clean slate. Just replacing references (GC will handle
+        // it eventually) can leave enough instances in RAM to OOM on fast style cycles.
         for (const lane of Object.keys(player.branchInstruments)) {
             try { player.branchInstruments[lane].stop(); } catch (_) {}
             delete player.branchInstruments[lane];
         }
-        await Promise.all([
-            ...VOICES.map(v => player.setInstrument(v.id, state.voiceInst[v.id])),
-            s.drumKit ? player.setDrumKit(s.drumKit) : Promise.resolve()
-        ]);
-        // Preload branch voices with the new style's pool so they're ready when lanes open.
+        if (player._branchPool) {
+            for (const id in player._branchPool) {
+                const entry = player._branchPool[id];
+                try { entry.sf.stop(); } catch (_) {}
+                try { entry.sf.disconnect && entry.sf.disconnect(); } catch (_) {}
+            }
+            player._branchPool = {};
+        }
+        // Load voices sequentially to avoid a memory spike (4 Soundfonts parsing their
+        // sample buffers in parallel was enough to trip Chrome's OOM watchdog).
+        for (const v of VOICES) {
+            await player.setInstrument(v.id, state.voiceInst[v.id]);
+        }
+        if (s.drumKit) await player.setDrumKit(s.drumKit);
         await preloadBranchInstruments();
     }
     if (state.isPlaying) play({ startFromCommit: state.currentCommitIdx });
@@ -574,11 +602,14 @@ const progressLabel = document.getElementById('progressLabel');
 async function ensurePlayer() {
     if (player) return player;
     player = new MusicPlayer();
-    await player.resume();
-    // Load all 4 voices + drums in parallel.
-    const loads = VOICES.map(v => player.setInstrument(v.id, state.voiceInst[v.id]));
-    if (state.drumKit) loads.push(player.setDrumKit(state.drumKit));
-    await Promise.all(loads);
+    // Don't call resume() here — at init time there's no user gesture yet, and Chrome
+    // prints a noisy console warning. resume() happens inside play() which is gesture-driven.
+    // Load Soundfonts sequentially to keep memory peaks flat (parallel loading briefly
+    // holds multiple copies of decoded sample buffers in memory).
+    for (const v of VOICES) {
+        await player.setInstrument(v.id, state.voiceInst[v.id]);
+    }
+    if (state.drumKit) await player.setDrumKit(state.drumKit);
     VOICES.forEach(v => player.setVoiceVolume(v.id, state.voiceMuted[v.id] ? 0 : 0.9));
     player.onBeat = (beat) => flashBeat(beat);
     player.onTick = (commitFloat) => {
@@ -676,11 +707,11 @@ async function play({ startFromCommit = 0 } = {}) {
     await player.resume();
     await preloadBranchInstruments();
     VOICES.forEach(v => player.setVoiceVolume(v.id, state.voiceMuted[v.id] ? 0 : 0.9));
-    // Pick drum + bass variants from the current style, seeded by the repo so it's stable.
     const style = findStyle(state.styleId);
     const repoSeed = Math.abs(hashString(state.source && state.source.label || 'anon'));
-    const drumPattern = style ? pickDrumVariant(style, repoSeed) : null;
-    const bassPattern = style ? pickBassVariant(style, repoSeed) : null;
+    // Pass full variant arrays to the scheduler; it rotates through them every 8 bars.
+    const drumPatterns = (style && style.drumPatterns) || [null];
+    const bassPatterns = (style && style.bassPatterns) || [null];
     player.scheduleAll({
         commits: state.layout.commits,
         laneOpenPlayIdx: state.layout.laneOpenPlayIdx,
@@ -692,8 +723,9 @@ async function play({ startFromCommit = 0 } = {}) {
         voiceOctaves: state.voiceOctave,
         voiceMuted: state.voiceMuted,
         drumMuted: !state.drumKit,
-        drumPattern,
-        bassPattern,
+        drumPatterns,
+        bassPatterns,
+        repoSeed,
         branchMotifs: state.branchMotifs,
         commitsPerBar: state.commitsPerBar,
         startFromCommit
@@ -703,14 +735,25 @@ async function play({ startFromCommit = 0 } = {}) {
 }
 
 // Load an instrument for each non-main lane. Re-entrant: only loads new lanes.
+// Sequential (not Promise.all) because each Soundfont is a few MB and loading 10 in
+// parallel briefly spikes memory enough for Chrome to trip OOM on big repos.
 async function preloadBranchInstruments() {
     if (!player || !state.layout) return;
+    // Unique pool instruments, not unique lanes — pool sharing means 100 lanes still
+    // only need ~7 distinct Soundfonts.
     const lanes = [...new Set(state.layout.commits.map(c => c.lane))].filter(l => l > 0);
-    await Promise.all(lanes.map(l => {
-        if (player.branchInstruments[l]) return null;
+    const uniqueInsts = new Set();
+    for (const l of lanes) {
         const inst = branchInstrumentFor(l);
-        return inst ? player.setBranchInstrument(l, inst) : null;
-    }));
+        if (!inst) continue;
+        if (!uniqueInsts.has(inst)) {
+            uniqueInsts.add(inst);
+            await player.setBranchInstrument(l, inst);
+        } else {
+            // Same pool instrument already loaded; associate this lane with it.
+            await player.setBranchInstrument(l, inst);
+        }
+    }
 }
 
 function stop() {
@@ -802,6 +845,7 @@ function applyCommits(rawCommits, branches, source) {
 
     state.layout = layoutCommits(sampled);
     state.key = deriveKey(source.label || 'unknown/unknown');
+    computeLaneInstruments();
 
     // Spacer only provides horizontal scroll extent; it's not the canvas's parent anymore.
     const totalW = totalGraphWidth(state.layout);
@@ -841,6 +885,11 @@ function init() {
     buildVoicePanel();
     wireSheets();
     renderNowPlaying(null);
+
+    // Kick off Soundfont loading in the background so Play has no warm-up pause.
+    // AudioContext can be constructed suspended; Soundfont.load just fetches samples.
+    // The actual audio won't start until a user gesture calls resume().
+    ensurePlayer().catch(e => console.warn('instrument preload failed', e));
 
     const form = document.getElementById('repoForm');
     form.addEventListener('submit', async (e) => {

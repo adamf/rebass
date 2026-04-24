@@ -66,15 +66,23 @@ function makeFsAdapter(rootHandle) {
         }
     }
 
-    // Resolve a File object for a path without reading its contents. gitpack uses this to
-    // hold references to large pack files (hundreds of MB) and slice them on demand rather
-    // than loading the whole thing into RAM.
+    // Resolve a File object for a path without reading its contents.
     async function getFile(path) {
         const parts = toParts(path);
         if (!parts.length) throw enoent(path);
         const parent = await resolveDir(parts.slice(0, -1));
         const fh = await parent.getFileHandle(parts[parts.length - 1]);
         return fh.getFile();
+    }
+
+    // Resolve the raw FileHandle for a path. gitpack uses this to re-fetch a fresh File
+    // on each slice read — File snapshots go stale as the browser's internal handles
+    // expire, which otherwise leaves big repos walkable only up to a few hundred commits.
+    async function getFileHandle(path) {
+        const parts = toParts(path);
+        if (!parts.length) throw enoent(path);
+        const parent = await resolveDir(parts.slice(0, -1));
+        return parent.getFileHandle(parts[parts.length - 1]);
     }
 
     async function readdir(path) {
@@ -108,8 +116,20 @@ function makeFsAdapter(rootHandle) {
         }
     }
 
+    // Drop cached handles/contents for a path so the next read re-traverses from root.
+    // Used by callers to recover from transient NotReadableError.
+    function invalidate(path) {
+        fileCache.delete(path);
+        readInFlight.delete(path);
+        // Clear all ancestor directory caches — any of them could have stale handles.
+        const parts = toParts(path);
+        for (let i = 0; i <= parts.length; i++) {
+            dirCache.delete(parts.slice(0, i).join('/'));
+        }
+    }
+
     return {
-        readFile, readdir, stat, getFile,
+        readFile, readdir, stat, getFile, getFileHandle, invalidate,
         _stats: () => ({
             dirCacheSize: dirCache.size,
             fileCacheSize: fileCache.size,
