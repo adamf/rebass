@@ -1,0 +1,513 @@
+:root {
+    --bg: #0b0e14;
+    --bg-2: #121720;
+    --bg-3: #1a2130;
+    --fg: #e6ecf2;
+    --fg-dim: #8b95a6;
+    --accent: #8ab4ff;
+    --accent-2: #ff8ac3;
+    --good: #9dff8a;
+    --warn: #ffc07a;
+    --danger: #ff7a8a;
+    --border: #23304a;
+    --shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    --row-h: 28px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+    margin: 0;
+    padding: 0;
+    background: radial-gradient(circle at 20% -10%, #1a2644 0%, #0b0e14 45%) fixed;
+    color: var(--fg);
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+}
+
+a { color: var(--accent); }
+button, select, input { font: inherit; color: inherit; }
+
+/* ============= Header ============= */
+.appHeader {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(11, 14, 20, 0.75);
+    backdrop-filter: blur(10px);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+.brand { display: flex; align-items: baseline; gap: 8px; }
+.brandMark { font-size: 22px; color: var(--accent); filter: drop-shadow(0 0 10px var(--accent)); }
+.brandName { font-size: 20px; font-weight: 700; letter-spacing: 0.02em; }
+.brandTag { color: var(--fg-dim); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }
+
+.repoForm {
+    flex: 1;
+    display: flex;
+    gap: 6px;
+    max-width: 720px;
+}
+#repoUrl {
+    flex: 1;
+    padding: 9px 12px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    outline: none;
+    transition: border-color .15s, box-shadow .15s;
+}
+#repoUrl:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(138, 180, 255, 0.15); }
+
+.repoForm button {
+    padding: 9px 16px;
+    background: var(--accent);
+    color: #0b0e14;
+    border: 0;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform .05s, filter .15s;
+}
+.repoForm button:hover { filter: brightness(1.08); }
+.repoForm button:active { transform: scale(0.98); }
+#stopBtn { background: var(--danger); }
+
+.headerSplit {
+    color: var(--fg-dim);
+    font-size: 11px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+}
+.headerLocal { display: flex; gap: 6px; flex-wrap: wrap; }
+.headerActions { display: flex; gap: 4px; margin-left: auto; }
+@media (max-width: 900px) {
+    .appHeader { flex-wrap: wrap; }
+    .repoForm { flex-basis: 100%; }
+    .headerSplit { display: none; }
+}
+.iconBtn {
+    background: var(--bg-2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    width: 36px; height: 36px;
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color .15s, border-color .15s;
+}
+.iconBtn:hover { background: var(--bg-3); border-color: var(--accent); }
+
+/* ============= Toast ============= */
+.toast {
+    position: fixed;
+    top: 72px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-3);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    padding: 10px 16px;
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    z-index: 100;
+    max-width: 80vw;
+}
+.toast-error { border-color: var(--danger); color: #ffe0e5; }
+.toast-info  { border-color: var(--accent); }
+
+/* ============= Sheets ============= */
+.sheet {
+    position: fixed;
+    top: 64px;
+    right: 16px;
+    width: min(420px, calc(100vw - 32px));
+    max-height: calc(100vh - 96px);
+    overflow-y: auto;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 18px 20px;
+    box-shadow: var(--shadow);
+    z-index: 50;
+}
+.sheetHead { display: flex; align-items: center; justify-content: space-between; }
+.sheet h2 { font-size: 16px; margin: 0 0 4px; }
+.sheet h3 { font-size: 13px; color: var(--fg-dim); margin: 18px 0 8px; letter-spacing: .06em; text-transform: uppercase; }
+.sheet .field {
+    display: grid;
+    grid-template-columns: 100px 1fr auto;
+    align-items: center;
+    gap: 8px;
+    margin: 10px 0;
+}
+.sheet .field input[type="range"] { accent-color: var(--accent); }
+.sheet .field input[type="number"],
+.sheet .field input[type="password"],
+.sheet .field select {
+    padding: 6px 8px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    width: 100%;
+}
+.fieldLabel { color: var(--fg-dim); font-size: 13px; }
+.fieldValue { color: var(--fg-dim); font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; }
+.hint { color: var(--fg-dim); font-size: 12px; margin: 4px 0; }
+
+.presetList { list-style: none; padding: 0; margin: 0; }
+.presetList li { margin: 4px 0; }
+.preset {
+    width: 100%;
+    text-align: left;
+    padding: 8px 10px;
+    background: var(--bg-3);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+}
+.preset:hover { border-color: var(--accent); }
+
+.credits { font-size: 12px; color: var(--fg-dim); margin-top: 12px; }
+
+/* ============= Main / transport ============= */
+.main {
+    display: grid;
+    grid-template-rows: auto auto auto 1fr;
+    gap: 6px;
+    padding: 6px 12px 12px;
+    min-height: calc(100vh - 62px);
+}
+
+.transport {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 18px;
+    align-items: center;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 14px;
+}
+.transportLeft { display: flex; flex-direction: column; gap: 8px; }
+.beatBar {
+    display: flex;
+    gap: 6px;
+}
+.beatCell {
+    width: 34px; height: 34px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 12px;
+    color: var(--fg-dim);
+    font-variant-numeric: tabular-nums;
+    transition: background-color .08s, color .08s, box-shadow .08s, transform .08s;
+}
+.beatCell.active {
+    background: var(--accent);
+    color: #0b0e14;
+    box-shadow: 0 0 22px rgba(138, 180, 255, 0.7);
+    transform: scale(1.05);
+}
+
+.progress { display: flex; align-items: center; gap: 10px; min-width: 180px; }
+.progressTrack { flex: 1; height: 6px; background: var(--bg-3); border-radius: 3px; overflow: hidden; }
+.progressFill { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .15s linear; }
+.progressLabel { color: var(--fg-dim); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.nowPlaying { min-width: 0; overflow: hidden; }
+.npMsg { font-size: 15px; font-weight: 500; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.npMeta { color: var(--fg-dim); font-size: 12px; margin-top: 2px; }
+.npSha { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent); }
+.mergeBadge { display: inline-block; padding: 1px 6px; background: var(--accent-2); color: #0b0e14; border-radius: 10px; font-size: 10px; font-weight: 700; letter-spacing: .05em; }
+
+/* ============= Stage (graph full-width) ============= */
+.stage {
+    display: block;
+    min-height: 0;
+}
+.graphViewport {
+    position: relative;
+    height: max(320px, calc(100vh - 280px));  /* definite height so absolute children size properly */
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+}
+/* The canvas floats on top, always filling the visible area. pointer-events: none so the
+ * scroller underneath keeps catching wheel/touch for native scroll. */
+.graphCanvas {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: calc(100% - 72px);
+    display: block;
+    z-index: 1;
+    pointer-events: none;
+}
+/* The scroller sits underneath the canvas — only its scroll mechanics matter.
+ * Canvas on top forwards wheel events to it so native kinetic scroll still works. */
+.graphScroller {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: calc(100% - 72px);
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    overscroll-behavior: contain;
+    z-index: 0;
+}
+.graphScroller::-webkit-scrollbar { display: none; }
+.graphSpacer {
+    height: 1px; /* provides horizontal scroll extent; width set in JS */
+}
+#gitGraph {
+    display: block;
+    background: transparent;
+}
+.playhead {
+    position: absolute;
+    top: 0; bottom: 72px;
+    /* left is set dynamically from JS to track the current commit's screen X. */
+    left: 50%;
+    width: 2px;
+    background: linear-gradient(180deg, transparent, var(--accent) 10%, var(--accent-2) 90%, transparent);
+    box-shadow: 0 0 12px rgba(138, 180, 255, 0.8);
+    pointer-events: none;
+    z-index: 5;
+    transform: translateX(-1px);
+}
+.playhead::before, .playhead::after {
+    content: "";
+    position: absolute;
+    left: -4px;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 10px var(--accent);
+}
+.playhead::before { top: 2px; }
+.playhead::after  { bottom: 2px; background: var(--accent-2); box-shadow: 0 0 10px var(--accent-2); }
+
+.graphEmpty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--fg-dim);
+    pointer-events: none;
+}
+/* `hidden` attribute would normally imply display:none, but display:flex above wins
+ * on specificity. Make the attribute explicit. */
+.graphEmpty[hidden] { display: none; }
+
+
+/* Hover tooltip over the graph canvas */
+.tooltip {
+    position: absolute;
+    z-index: 4;
+    max-width: 260px;
+    background: rgba(26, 33, 48, 0.95);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 8px;
+    font-size: 12px;
+    color: var(--fg);
+    pointer-events: none;
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(6px);
+}
+.tooltip .ttSha {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--accent);
+}
+.tooltip .ttAuthor { color: var(--fg-dim); }
+.tooltip .ttMsg { margin-top: 2px; }
+
+/* Minimap along the bottom of the graph viewport */
+.minimapCanvas {
+    position: absolute;
+    left: 8px;
+    bottom: 6px;
+    width: calc(100% - 16px);
+    height: 56px;
+    display: block;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: ew-resize;
+    z-index: 3;
+}
+.minimapCanvas:hover { border-color: var(--accent); }
+
+/* ============= Voice strip (horizontal chips above the graph) ============= */
+.voiceStrip {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 6px 10px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+}
+.voicePanel { display: flex; flex-wrap: wrap; gap: 6px; }
+.voiceRow {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px 4px 10px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+}
+.voiceRow.muted { opacity: 0.45; }
+.voiceLabel { font-weight: 700; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
+.voiceRow-bass .voiceLabel { color: #ffc07a; }
+.voiceRow-lead .voiceLabel { color: #8ab4ff; }
+.voiceRow-pad  .voiceLabel { color: #c890ff; }
+.voiceRow-bell .voiceLabel { color: #7affd9; }
+
+.voiceInst, .voiceOct {
+    padding: 5px 6px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+    max-width: 160px;
+}
+.voiceOct { max-width: 72px; }
+.voiceMute {
+    width: 28px; height: 28px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--fg);
+    padding: 0;
+}
+.voiceMute:hover { border-color: var(--accent); color: var(--accent); }
+.voiceMute.isMuted { color: var(--danger); border-color: rgba(255, 122, 138, 0.5); }
+.voiceMute svg { display: block; }
+
+/* Branch chips appear while a non-main lane is active, fade out when it closes. */
+.voiceRow-branch {
+    border-style: dashed;
+    transition: opacity .25s ease-out, transform .25s ease-out;
+    padding: 4px 12px;
+}
+.voiceRow-branch .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+}
+.voiceRow-branch .voiceLabel { font-size: 10px; }
+.voiceBranchInst { font-size: 12px; color: var(--fg-dim); }
+.voiceRow-branch.appearing { opacity: 0; transform: scale(0.85); }
+.voiceRow-branch.exiting { opacity: 0; transform: scale(0.85); }
+
+/* ============= Control strip (style + tempo + accel + density + drums) ============= */
+.controlStrip {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 10px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+}
+.control {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px 4px 12px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+}
+.controlLabel {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--fg-dim);
+    font-weight: 700;
+}
+.controlStyle .controlLabel { color: var(--accent-2); }
+.controlTempo { flex: 1 1 300px; min-width: 240px; max-width: 480px; }
+.controlTempo input[type="range"] { flex: 1; accent-color: var(--accent); }
+.controlValue {
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+    color: var(--fg-dim);
+    min-width: 56px;
+    text-align: right;
+}
+.control select {
+    padding: 4px 6px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--fg);
+    font-size: 13px;
+}
+
+/* Tighten the transport in full-width mode */
+.transport { padding: 8px 12px; }
+.beatCell { width: 28px; height: 28px; font-size: 11px; }
+.nowPlaying { min-width: 0; }
+.npMsg { font-size: 14px; }
+
+/* ============= Settings extras ============= */
+.localRow { display: flex; gap: 6px; flex-wrap: wrap; }
+.btn {
+    padding: 7px 12px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--fg);
+    cursor: pointer;
+}
+.btn:hover { border-color: var(--accent); }
+.cmd {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin: 6px 0;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: var(--accent);
+    cursor: text;
+    user-select: all;
+}
+
+/* Drop highlight overlay when user drags a file anywhere on the page */
+body.isDropping::after {
+    content: "Drop to load commits";
+    position: fixed; inset: 12px;
+    border: 3px dashed var(--accent);
+    border-radius: 16px;
+    background: rgba(138, 180, 255, 0.08);
+    color: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; font-weight: 600;
+    z-index: 999;
+    pointer-events: none;
+}

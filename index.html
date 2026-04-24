@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0b0e14">
+    <title>Rebass — Music from a git history</title>
+    <link rel="stylesheet" href="css/rebass.css">
+    <script src="https://cdn.jsdelivr.net/npm/tonal/browser/tonal.min.js" onload="window.dispatchEvent(new Event('tonalLoaded'))"></script>
+</head>
+<body>
+
+<header class="appHeader">
+    <div class="brand">
+        <span class="brandMark" aria-hidden="true">⟲</span>
+        <span class="brandName">Rebass</span>
+        <span class="brandTag">music from a git history</span>
+    </div>
+    <form id="repoForm" class="repoForm">
+        <input type="url" id="repoUrl" placeholder="https://github.com/owner/repo" autocomplete="off" spellcheck="false">
+        <button type="submit" id="playBtn">Play ▶</button>
+        <button type="button" id="stopBtn" hidden>Stop ■</button>
+    </form>
+    <div class="headerSplit" aria-hidden="true">or</div>
+    <div class="headerLocal">
+        <button type="button" id="pickFolderBtn" class="btn">Local folder…</button>
+        <button type="button" id="pickFileBtn" class="btn">Upload file…</button>
+    </div>
+    <div class="headerActions">
+        <button type="button" class="iconBtn" id="settingsBtn" aria-label="Settings" title="Settings">⚙</button>
+        <button type="button" class="iconBtn" id="aboutBtn" aria-label="About" title="About">i</button>
+    </div>
+</header>
+
+<div id="toast" class="toast" hidden></div>
+
+<aside class="sheet" id="settingsSheet" hidden>
+    <div class="sheetHead">
+        <h2>Settings</h2>
+        <button type="button" class="iconBtn" data-close-sheet aria-label="Close">✕</button>
+    </div>
+    <label class="field fieldRow">
+        <span class="fieldLabel">Branch motifs</span>
+        <input type="checkbox" id="branchMotifs" checked>
+        <span class="fieldValue hint">3-note phrase when a new branch opens</span>
+    </label>
+    <label class="field">
+        <span class="fieldLabel">Scale</span>
+        <select id="scaleSelect">
+            <option value="minor pentatonic">Minor pentatonic</option>
+            <option value="major pentatonic">Major pentatonic</option>
+            <option value="dorian">Dorian</option>
+            <option value="mixolydian">Mixolydian</option>
+            <option value="lydian">Lydian</option>
+            <option value="minor">Natural minor</option>
+            <option value="major">Major</option>
+        </select>
+    </label>
+    <label class="field">
+        <span class="fieldLabel">Sample rate</span>
+        <select id="sampleRate">
+            <option value="1">1 (play every commit)</option>
+            <option value="2">1 in 2</option>
+            <option value="5">1 in 5</option>
+            <option value="10">1 in 10</option>
+            <option value="25">1 in 25</option>
+            <option value="100">1 in 100</option>
+        </select>
+    </label>
+    <p class="hint">Merges are always kept. Use for huge repos (tensorflow, vscode…).</p>
+    <label class="field">
+        <span class="fieldLabel">Max commits</span>
+        <input type="number" id="maxCommits" value="80" min="10" max="50000">
+    </label>
+    <label class="field">
+        <span class="fieldLabel">GitHub token</span>
+        <input type="password" id="ghToken" placeholder="ghp_… optional, stored locally">
+    </label>
+
+    <h3>Local import one-liner</h3>
+    <p class="hint">
+        Drop the resulting file anywhere on the page (or use the "Upload file…" button in the header).
+    </p>
+    <pre class="cmd" id="oneLiner">git log --all --format='%H%x09%P%x09%aN%x09%aI%x09%s' &gt; rebass.log</pre>
+    <p class="hint">
+        GitHub allows 60 anonymous API requests per hour. A token is optional, stored in your browser only,
+        and lets you play bigger repos faster.
+    </p>
+    <h3>Try a repo</h3>
+    <ul class="presetList">
+        <li><button type="button" class="preset" data-repo="https://github.com/adamf/EnPassant">adamf/EnPassant — small, solo, hacky</button></li>
+        <li><button type="button" class="preset" data-repo="https://github.com/tc39/proposal-pipeline-operator">tc39/proposal-pipeline-operator — mostly linear</button></li>
+        <li><button type="button" class="preset" data-repo="https://github.com/vercel/ai">vercel/ai — branchy, active</button></li>
+        <li><button type="button" class="preset" data-repo="https://github.com/sindresorhus/slugify">sindresorhus/slugify — tiny</button></li>
+    </ul>
+</aside>
+
+<aside class="sheet" id="aboutSheet" hidden>
+    <div class="sheetHead">
+        <h2>About Rebass</h2>
+        <button type="button" class="iconBtn" data-close-sheet aria-label="Close">✕</button>
+    </div>
+    <p>
+        Rebass turns a git history into music. Each commit becomes one bar of a four-beat groove.
+        A steady <em>bass</em> and <em>pad</em> ground the repo's key, while a <em>lead</em> voice
+        plays a melody derived from each commit's SHA. A <em>bell</em> accents merges and long
+        commit messages.
+    </p>
+    <p>
+        Different branches pan to different sides of the stereo field, so a branchy graph sounds
+        like a busier ensemble; a linear history still sounds like a full arrangement because the
+        bass and pad never stop.
+    </p>
+    <p>
+        The playhead walks the git graph on the left, a commit at a time. Click a commit to inspect
+        it. Change instruments any time; they reload without stopping playback.
+    </p>
+    <p class="credits">
+        <a href="https://github.com/adamf/EnPassant">Sister project: En Passant (musical chess)</a>
+    </p>
+</aside>
+
+<main class="main">
+    <section class="transport">
+        <div class="transportLeft">
+            <div class="beatBar" id="beatBar" aria-hidden="true"></div>
+            <div class="progress">
+                <div class="progressTrack"><div class="progressFill" id="progressFill"></div></div>
+                <span class="progressLabel" id="progressLabel">—</span>
+            </div>
+        </div>
+        <div class="nowPlaying" id="nowPlaying">
+            <div class="npMsg" id="npMsg">Paste a GitHub repo URL above and press Play.</div>
+            <div class="npMeta" id="npMeta"></div>
+        </div>
+    </section>
+
+    <section class="controlStrip" aria-label="Global controls">
+        <label class="control controlStyle">
+            <span class="controlLabel">Style</span>
+            <select id="styleSelect"></select>
+        </label>
+        <label class="control controlTempo">
+            <span class="controlLabel">Tempo</span>
+            <input type="range" id="mainTempo" min="60" max="200" step="2" value="120">
+            <span class="controlValue" id="mainTempoValue">120 BPM</span>
+        </label>
+        <label class="control">
+            <span class="controlLabel">Accel</span>
+            <select id="mainAccel">
+                <option value="0">off</option>
+                <option value="0.3">subtle</option>
+                <option value="0.6">strong</option>
+                <option value="1.0">aggressive</option>
+                <option value="1.5">wild</option>
+            </select>
+        </label>
+        <label class="control">
+            <span class="controlLabel">Density</span>
+            <select id="mainCpb" title="Commits per bar">
+                <option value="1">1 / bar</option>
+                <option value="2">2 / bar</option>
+                <option value="4">4 / bar</option>
+                <option value="8">8 / bar</option>
+            </select>
+        </label>
+        <label class="control">
+            <span class="controlLabel">Drums</span>
+            <select id="mainDrumKit">
+                <option value="">off</option>
+                <option value="TR-808">TR-808</option>
+                <option value="Roland CR-8000">Roland CR-8000</option>
+                <option value="LM-2">LM-2</option>
+                <option value="MFB-512">MFB-512</option>
+                <option value="Casio-RZ1">Casio-RZ1</option>
+            </select>
+        </label>
+    </section>
+
+    <section class="voiceStrip" aria-label="Voices">
+        <div class="voicePanel" id="voicePanel"></div>
+    </section>
+
+    <section class="stage">
+        <div class="graphViewport" id="graphViewport">
+            <canvas id="graphCanvas" class="graphCanvas"></canvas>
+            <div class="graphScroller" id="graphScroller">
+                <div class="graphSpacer" id="graphSpacer"></div>
+            </div>
+            <div class="tooltip" id="graphTooltip" hidden></div>
+            <div class="playhead" id="playhead" aria-hidden="true"></div>
+            <canvas id="minimapCanvas" class="minimapCanvas" aria-label="Minimap"></canvas>
+            <div class="graphEmpty" id="graphEmpty">
+                Your repo's commit graph will appear here — time flows left&nbsp;→&nbsp;right.
+            </div>
+        </div>
+    </section>
+</main>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
