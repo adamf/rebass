@@ -10,7 +10,7 @@ import {
     DRUM_KITS, DEFAULT_DRUM_KIT
 } from './music.js';
 import { installDropZone, pickFileAndParse, LOG_ONELINER } from './import.js';
-import { pickLocalRepo, hasDirectoryPicker } from './localRepo.js';
+import { pickLocalRepo, pickLocalRepoViaUpload, hasDirectoryPicker } from './localRepo.js';
 import { sampleCommits } from './sample.js';
 import {
     STYLES, findStyle, DEFAULT_STYLE, pickDrumVariant, pickBassVariant,
@@ -463,6 +463,24 @@ function wireSheets() {
         }
     });
 
+    document.getElementById('pickFolderAltBtn').addEventListener('click', async () => {
+        closeAll();
+        const seq = newLoadSeq();
+        try {
+            const result = await pickLocalRepoViaUpload({
+                onProgress: (s) => toast(s, 'info', 60000),
+                maxCommits: Math.max(state.maxCommits, 200000)
+            });
+            if (seq !== state.loadSeq) return;
+            loadCommits(result.commits, result.branches, {
+                kind: 'local', label: result.name || 'local repo'
+            });
+        } catch (e) {
+            if (e && e.name === 'AbortError') return;
+            toast(e.message || String(e), 'error', 8000);
+        }
+    });
+
     document.getElementById('pickFileBtn').addEventListener('click', async () => {
         closeAll();
         const seq = newLoadSeq();
@@ -599,36 +617,34 @@ let player = null;
 const progressFill = document.getElementById('progressFill');
 const progressLabel = document.getElementById('progressLabel');
 
+let playerInitPromise = null;
 async function ensurePlayer() {
-    if (player) return player;
-    player = new MusicPlayer();
-    // Don't call resume() here — at init time there's no user gesture yet, and Chrome
-    // prints a noisy console warning. resume() happens inside play() which is gesture-driven.
-    // Load Soundfonts sequentially to keep memory peaks flat (parallel loading briefly
-    // holds multiple copies of decoded sample buffers in memory).
-    for (const v of VOICES) {
-        await player.setInstrument(v.id, state.voiceInst[v.id]);
-    }
-    if (state.drumKit) await player.setDrumKit(state.drumKit);
-    VOICES.forEach(v => player.setVoiceVolume(v.id, state.voiceMuted[v.id] ? 0 : 0.9));
-    player.onBeat = (beat) => flashBeat(beat);
-    player.onTick = (commitFloat) => {
-        // Smooth scroll + playhead every frame, not just at commit boundaries.
-        setGraphScrollForCommitFloat(commitFloat);
-    };
-    player.onCommit = (commitIdx, sha) => {
-        state.currentCommitIdx = commitIdx;
-        graphView.flashNode(sha);
-        minimap.setPlayhead(commitIdx);
-        const commit = state.layout.byRow[commitIdx];
-        if (commit) renderNowPlaying(commit);
-        const total = state.layout.commits.length;
-        progressFill.style.width = `${((commitIdx + 1) / total) * 100}%`;
-        progressLabel.textContent = `${commitIdx + 1} / ${total}`;
-        syncBranchChips(commitIdx);
-    };
-    player.onDone = () => { state.isPlaying = false; togglePlayUI(false); };
-    return player;
+    if (playerInitPromise) return playerInitPromise;
+    playerInitPromise = (async () => {
+        const p = new MusicPlayer();
+        for (const v of VOICES) {
+            await p.setInstrument(v.id, state.voiceInst[v.id]);
+        }
+        if (state.drumKit) await p.setDrumKit(state.drumKit);
+        VOICES.forEach(v => p.setVoiceVolume(v.id, state.voiceMuted[v.id] ? 0 : 0.9));
+        p.onBeat = (beat) => flashBeat(beat);
+        p.onTick = (commitFloat) => setGraphScrollForCommitFloat(commitFloat);
+        p.onCommit = (commitIdx, sha) => {
+            state.currentCommitIdx = commitIdx;
+            graphView.flashNode(sha);
+            minimap.setPlayhead(commitIdx);
+            const commit = state.layout.byRow[commitIdx];
+            if (commit) renderNowPlaying(commit);
+            const total = state.layout.commits.length;
+            progressFill.style.width = `${((commitIdx + 1) / total) * 100}%`;
+            progressLabel.textContent = `${commitIdx + 1} / ${total}`;
+            syncBranchChips(commitIdx);
+        };
+        p.onDone = () => { state.isPlaying = false; togglePlayUI(false); };
+        player = p;
+        return p;
+    })();
+    return playerInitPromise;
 }
 
 function svgIcon(body) {
@@ -886,10 +902,8 @@ function init() {
     wireSheets();
     renderNowPlaying(null);
 
-    // Kick off Soundfont loading in the background so Play has no warm-up pause.
-    // AudioContext can be constructed suspended; Soundfont.load just fetches samples.
-    // The actual audio won't start until a user gesture calls resume().
-    ensurePlayer().catch(e => console.warn('instrument preload failed', e));
+    // Used to preload Soundfonts at init so Play was instant, but Chrome tripped OOM
+    // on some machines during init-time sample decoding. Load on first Play instead.
 
     const form = document.getElementById('repoForm');
     form.addEventListener('submit', async (e) => {

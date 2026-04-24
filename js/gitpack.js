@@ -151,9 +151,12 @@ export async function readObjectAt(pack, offset, ctx) {
         sliceBytes = pack.bytes.subarray(offset, objEnd);
     } else {
         const file = await pack.getFile();
-        sliceBytes = new Uint8Array(
-            await file.slice(offset, objEnd).arrayBuffer()
-        );
+        const blob = file.slice(offset, objEnd);
+        // Use the cascading reader if available (handles Chrome's NotReadableError
+        // quirks by trying multiple Blob-reading code paths).
+        sliceBytes = ctx.readBlobBytes
+            ? await ctx.readBlobBytes(blob)
+            : new Uint8Array(await blob.arrayBuffer());
     }
     const hdr = readObjectHeader(sliceBytes, 0);
     const typeName = OBJ_TYPE[hdr.type];
@@ -171,7 +174,8 @@ export async function readObjectAt(pack, offset, ctx) {
         const entry = ctx.oidToPack && ctx.oidToPack.get(baseOid);
         if (!entry) throw new Error(`REF_DELTA base missing: ${baseOid}`);
         const base = await readObjectAt(entry, entry.offset, {
-            oidToPack: ctx.oidToPack, cache, endOf: entry.endOf
+            oidToPack: ctx.oidToPack, cache, endOf: entry.endOf,
+            readBlobBytes: ctx.readBlobBytes
         });
         const delta = inflateRange(sliceBytes, hdr.headerEnd + 20, sliceBytes.length);
         result = { type: base.type, data: applyDelta(base.data, delta) };
@@ -462,27 +466,33 @@ export async function loadPacks(fs, gitdir, onProgress) {
                 endOf.set(offsets[i], nextEnd);
             }
             const thisPackId = packId++;
-            // Try to read the whole pack into memory, then immediately extract just the
-            // commit/tag bytes and drop the full buffer. For a typical repo this cuts
-            // memory to ~1–5% of the pack size (the rest is trees + blobs we never need).
-            let packBytes = null;
+            // Try to read the whole pack into memory *only* if it's small enough that
+            // concatenating into a single Uint8Array is safe. A 500MB pack file via
+            // arrayBuffer() or stream()-then-concat allocates 500MB contiguously and
+            // crashes Chrome. For big packs we go straight to per-object streaming.
+            const WHOLE_PACK_LIMIT = 80 * 1024 * 1024;
             let trimmedBytes = null;
-            try {
-                const probeFile = await fh.getFile();
-                packBytes = new Uint8Array(await probeFile.arrayBuffer());
-                const origSize = packBytes.length;
-                trimmedBytes = extractInterestingBytes(packBytes, oidToOffset, endOf);
-                let trimmedSize = 0;
-                for (const b of trimmedBytes.values()) trimmedSize += b.length;
-                packBytes = null; // let the full buffer GC
-                if (onProgress) {
-                    onProgress(`Trimmed pack ${base.slice(5, 13)}…: ` +
-                        `${(origSize / 1048576).toFixed(1)}MB → ${(trimmedSize / 1048576).toFixed(2)}MB ` +
-                        `(${trimmedBytes.size} commit-ish objects)`);
+            const probeFile = await fh.getFile();
+            if (probeFile.size < WHOLE_PACK_LIMIT) {
+                try {
+                    let packBytes = typeof fs.readBlobBytes === 'function'
+                        ? await fs.readBlobBytes(probeFile)
+                        : new Uint8Array(await probeFile.arrayBuffer());
+                    const origSize = packBytes.length;
+                    trimmedBytes = extractInterestingBytes(packBytes, oidToOffset, endOf);
+                    let trimmedSize = 0;
+                    for (const b of trimmedBytes.values()) trimmedSize += b.length;
+                    packBytes = null; // let the full buffer GC
+                    if (onProgress) {
+                        onProgress(`Trimmed pack ${base.slice(5, 13)}…: ` +
+                            `${(origSize / 1048576).toFixed(1)}MB → ${(trimmedSize / 1048576).toFixed(2)}MB ` +
+                            `(${trimmedBytes.size} commit-ish objects)`);
+                    }
+                } catch (e) {
+                    console.warn('whole-pack read failed, falling back to streaming', base, e.message || e);
                 }
-            } catch (e) {
-                console.warn('whole-pack read failed, falling back to streaming', base, e.message || e);
-                if (onProgress) onProgress(`Streaming pack ${base.slice(5, 13)}… (couldn't load whole)`);
+            } else if (onProgress) {
+                onProgress(`Streaming pack ${base.slice(5, 13)}… (${(probeFile.size / 1048576).toFixed(0)}MB, too big to load whole)`);
             }
 
             let currentFh = fh;
@@ -542,7 +552,8 @@ export async function fastWalk({ fs, gitdir, onProgress = () => {}, maxCommits =
         if (entry) {
             try {
                 const r = await readObjectAt(entry, entry.offset, {
-                    oidToPack, cache: decodeCache, endOf: entry.endOf
+                    oidToPack, cache: decodeCache, endOf: entry.endOf,
+                    readBlobBytes: fs.readBlobBytes
                 });
                 stats.packReads++;
                 return r;
