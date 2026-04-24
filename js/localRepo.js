@@ -98,9 +98,16 @@ export async function pickLocalRepoViaUpload({ onProgress = () => {}, maxCommits
         throw new Error("No .git directory found. Make sure hidden files are visible in the picker (⌘⇧. on macOS) and pick the folder containing .git.");
     }
 
-    // Build path → File map keyed relative to the .git directory.
+    // Build path → File map keyed relative to the .git directory. For files small enough
+    // to slurp, clone via arrayBuffer + new File([bytes]) right now. Cloning immediately
+    // after pick snapshots the bytes before Chrome's sandbox revokes access (a timing
+    // quirk several people have hit). Big files stay as the original File reference and
+    // are read per-slice during the walk.
+    const CLONE_LIMIT = 50 * 1024 * 1024;
     const fileMap = new Map();
     let repoName = '(local repo)';
+    let cloned = 0, cloneFailed = 0;
+    onProgress(`Snapshotting ${gitFiles.length} .git files…`);
     for (const f of gitFiles) {
         const rel = f.webkitRelativePath || f.name;
         const parts = rel.split('/');
@@ -110,12 +117,23 @@ export async function pickLocalRepoViaUpload({ onProgress = () => {}, maxCommits
             if (gitIdx > 0) repoName = parts[0];
             gitDirPath = parts.slice(gitIdx + 1).join('/');
         } else {
-            // User picked the .git folder directly — but "/.git/" wouldn't match then.
-            // Shouldn't reach here because of the filter above. Defensive fallback.
             gitDirPath = parts.slice(1).join('/');
         }
-        if (gitDirPath) fileMap.set(gitDirPath, f);
+        if (!gitDirPath) continue;
+        let ref = f;
+        if (f.size < CLONE_LIMIT) {
+            try {
+                const buf = await f.arrayBuffer();
+                ref = new File([buf], f.name, { type: f.type });
+                cloned++;
+            } catch (_) {
+                // Clone failed; keep original ref. Stream fallback will try later.
+                cloneFailed++;
+            }
+        }
+        fileMap.set(gitDirPath, ref);
     }
+    onProgress(`Cloned ${cloned} files (${cloneFailed} failed); ${gitFiles.length - cloned - cloneFailed} streaming`);
     if (!fileMap.has('HEAD')) {
         throw new Error(`Filtered ${gitFiles.length} .git files but no HEAD. Is this a valid git repo?`);
     }
