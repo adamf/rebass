@@ -61,8 +61,30 @@ function makeUploadFsAdapter(fileMap) {
         return { getFile: async () => file };
     }
 
+    // For the upload-file adapter, "iterating" means returning synthetic entries that
+    // wrap the File objects directly — no further lookup needed.
+    async function iterDirectory(path) {
+        const prefix = norm(path) + '/';
+        const out = [];
+        const seen = new Set();
+        for (const [key, file] of fileMap) {
+            if (!key.startsWith(prefix)) continue;
+            const rest = key.slice(prefix.length);
+            const parts = rest.split('/');
+            const first = parts[0];
+            if (!first || seen.has(first)) continue;
+            seen.add(first);
+            if (parts.length === 1) {
+                out.push({ name: first, kind: 'file', getFile: async () => file });
+            } else {
+                out.push({ name: first, kind: 'directory' });
+            }
+        }
+        return out;
+    }
+
     return {
-        readFile, readdir, stat, getFile, getFileHandle,
+        readFile, readdir, stat, getFile, getFileHandle, iterDirectory,
         invalidate: () => {},
         readBlobBytes: async (blob) => new Uint8Array(await blob.arrayBuffer())
     };
@@ -292,6 +314,33 @@ function makeFsAdapter(rootHandle) {
         return parent.getFileHandle(parts[parts.length - 1]);
     }
 
+    // Diagnostic-style iteration: walk via .values(), call getFile() during iteration,
+    // KEEP THE ORIGINAL HANDLE AND FILE ALIVE on each returned object so Chrome doesn't
+    // GC them before the consumer reads. Defer arrayBuffer until after iteration to
+    // exactly match the diagnostic's flow that succeeded for every file.
+    async function iterDirectory(path) {
+        const parts = toParts(path);
+        let h = rootHandle;
+        for (const p of parts) h = await h.getDirectoryHandle(p);
+        const entries = [];
+        for await (const e of h.values()) {
+            if (e.kind === 'file') {
+                const file = await e.getFile();
+                entries.push({
+                    name: e.name,
+                    kind: 'file',
+                    file,           // strong ref to File
+                    _entry: e,      // strong ref to FileSystemFileHandle
+                    getFile: async () => file,
+                    bytes: null     // populated lazily, not during iteration
+                });
+            } else {
+                entries.push({ name: e.name, kind: e.kind, _entry: e });
+            }
+        }
+        return entries;
+    }
+
     async function readdir(path) {
         try {
             const h = await resolveDir(toParts(path));
@@ -336,7 +385,7 @@ function makeFsAdapter(rootHandle) {
     }
 
     return {
-        readFile, readdir, stat, getFile, getFileHandle, invalidate,
+        readFile, readdir, stat, getFile, getFileHandle, iterDirectory, invalidate,
         readBlobBytes,
         _stats: () => ({
             dirCacheSize: dirCache.size,
@@ -367,6 +416,27 @@ export async function pickLocalRepo({ onProgress = () => {}, maxCommits = 500000
             throw new Error("That folder isn't a git repo (no .git, no objects/+refs/).");
         }
     }
+
+    // ---- DIAGNOSTIC: try to read the known-problem files inline, mimicking /diag/. ----
+    try {
+        const objects = await gitHandle.getDirectoryHandle('objects');
+        const packDir = await objects.getDirectoryHandle('pack');
+        let target = null;
+        for await (const e of packDir.values()) {
+            if (e.kind === 'file' && e.name.includes('f74efa1a')) {
+                target = e;
+                break;
+            }
+        }
+        if (target) {
+            const file = await target.getFile();
+            const buf = await file.arrayBuffer();
+            console.log('[inline-diag] f74efa1a file read ok:', buf.byteLength, 'bytes');
+        }
+    } catch (e) {
+        console.error('[inline-diag] f74efa1a read failed:', e.message || e);
+    }
+    // ---- end diagnostic ----
 
     const fs = makeFsAdapter(gitHandle);
     const { commits, refs } = await fastWalk({

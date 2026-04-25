@@ -232,8 +232,10 @@ export class GraphView {
             const y1 = nY(e.from.lane);
             const x2 = nodeX(e.to.row) + translateX;
             const y2 = nY(e.to.lane);
-            const olderLane = e.to.row < e.from.row ? e.to.lane : e.from.lane;
-            ctx.strokeStyle = laneColor(olderLane);
+            // Color edges by the deeper (branch) lane so the arc matches its branch's nodes.
+            // Same-lane edges trivially match either endpoint.
+            const branchLane = Math.max(e.from.lane, e.to.lane);
+            ctx.strokeStyle = laneColor(branchLane);
             ctx.globalAlpha = 0.75;
             ctx.beginPath();
             if (y1 === y2) {
@@ -421,6 +423,28 @@ export class Minimap {
 
         ctx.fillStyle = 'rgba(255,255,255,0.02)';
         ctx.fillRect(0, 0, viewportW, viewportH);
+
+        const laneMid = Math.max(1, laneH / 2);
+
+        // Lane spans: a horizontal line per lane from its oldest to newest commit.
+        // Cross-lane edges are intentionally skipped — at this density they overwhelm
+        // the minimap with diagonal noise.
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.7;
+        for (let l = 0; l < this.layout.laneCount; l++) {
+            const openIdx = this.layout.laneOpenPlayIdx[l];
+            const closeIdx = this.layout.laneClosePlayIdx[l];
+            if (openIdx < 0 || closeIdx < 0) continue;
+            const x1 = xOf(openIdx);
+            const x2 = xOf(closeIdx);
+            const y = Math.floor(yOf(l) + laneMid);
+            ctx.strokeStyle = laneColor(l);
+            ctx.beginPath();
+            ctx.moveTo(x1, y);
+            ctx.lineTo(x2, y);
+            ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
 
         for (const c of commits) {
             ctx.fillStyle = laneColor(c.lane);

@@ -303,6 +303,17 @@ export class MusicPlayer {
         catch (_) { chain.gain.gain.value = v; }
     }
 
+    // Live-tweak the octave for a voice. Already-scheduled notes (within the
+    // lookahead window) keep their old pitch; subsequent bars pick up the new value.
+    setVoiceOctave(voiceId, octave) {
+        if (this._scheduleCtx && this._scheduleCtx.oct) {
+            this._scheduleCtx.oct[voiceId] = octave | 0;
+        }
+        if (this._lastScheduleParams && this._lastScheduleParams.voiceOctaves) {
+            this._lastScheduleParams.voiceOctaves[voiceId] = octave | 0;
+        }
+    }
+
     _schedulePan(registry, id, pan, time) {
         const chain = registry[id];
         if (!chain || !chain.panner) return;

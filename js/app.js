@@ -66,6 +66,7 @@ function loadPrefs() {
         const raw = localStorage.getItem('rebass:prefs');
         if (!raw) return;
         const p = JSON.parse(raw);
+        if (typeof p.styleId === 'string' && findStyle(p.styleId)) state.styleId = p.styleId;
         if (p.tempo) state.tempo = p.tempo;
         if (p.scaleName) state.scaleName = p.scaleName;
         if (p.maxCommits) state.maxCommits = p.maxCommits;
@@ -86,6 +87,7 @@ function loadPrefs() {
 function savePrefs() {
     try {
         localStorage.setItem('rebass:prefs', JSON.stringify({
+            styleId: state.styleId,
             tempo: state.tempo,
             scaleName: state.scaleName,
             maxCommits: state.maxCommits,
@@ -206,7 +208,9 @@ function buildVoicePanel() {
         }
         octSel.value = String(state.voiceOctave[v.id]);
         octSel.addEventListener('change', () => {
-            state.voiceOctave[v.id] = parseInt(octSel.value, 10);
+            const oct = parseInt(octSel.value, 10);
+            state.voiceOctave[v.id] = oct;
+            if (player) player.setVoiceOctave(v.id, oct);
             savePrefs();
         });
         row.appendChild(octSel);
@@ -429,11 +433,16 @@ function wireSheets() {
         });
     });
 
-    // Local folder + upload buttons
+    // Local folder + upload buttons. FSA covers Chromium; the upload-folder fallback
+    // is for Firefox/Safari, so only one of the two ever shows.
     const pickFolderBtn = document.getElementById('pickFolderBtn');
-    if (!hasDirectoryPicker()) {
-        pickFolderBtn.disabled = true;
-        pickFolderBtn.title = 'Browser does not support folder pickers. Use the one-liner below.';
+    const pickFolderAltBtn = document.getElementById('pickFolderAltBtn');
+    if (hasDirectoryPicker()) {
+        pickFolderAltBtn.style.display = 'none';
+    } else {
+        pickFolderBtn.style.display = 'none';
+        pickFolderAltBtn.textContent = 'Local folder…';
+        pickFolderAltBtn.title = '';
     }
     pickFolderBtn.addEventListener('click', async () => {
         closeAll();
@@ -463,7 +472,7 @@ function wireSheets() {
         }
     });
 
-    document.getElementById('pickFolderAltBtn').addEventListener('click', async () => {
+    pickFolderAltBtn.addEventListener('click', async () => {
         closeAll();
         const seq = newLoadSeq();
         try {
@@ -719,9 +728,24 @@ function seekTo(playIdx) {
 async function play({ startFromCommit = 0 } = {}) {
     if (!state.layout) return;
     ensureSilentAudio();
-    await ensurePlayer();
-    await player.resume();
-    await preloadBranchInstruments();
+
+    // First play (or after a style switch with new branch instruments) involves
+    // Soundfont fetch + decode and can stall ~1–3s. If we don't reach scheduleAll
+    // within 150ms, surface a loading toast so the click doesn't feel dead.
+    let loadingShown = false;
+    const slowLoadTimer = setTimeout(() => {
+        toast('Loading instruments…', 'info', 30000);
+        loadingShown = true;
+    }, 150);
+
+    try {
+        await ensurePlayer();
+        await player.resume();
+        await preloadBranchInstruments();
+    } finally {
+        clearTimeout(slowLoadTimer);
+        if (loadingShown) toastEl.hidden = true;
+    }
     VOICES.forEach(v => player.setVoiceVolume(v.id, state.voiceMuted[v.id] ? 0 : 0.9));
     const style = findStyle(state.styleId);
     const repoSeed = Math.abs(hashString(state.source && state.source.label || 'anon'));
@@ -925,7 +949,9 @@ function init() {
 
     document.getElementById('stopBtn').addEventListener('click', stop);
 
-    // Drag anywhere on the page to drop a .log or .json file.
+    // TEMPORARILY DISABLED FOR FSA DIAG: document-level drag/drop listeners may interfere
+    // with Chrome's File System Access permission state.
+    /*
     installDropZone({
         onCommits: (commits, filename) => {
             loadCommits(commits, [], { kind: 'file', label: filename });
@@ -934,6 +960,7 @@ function init() {
         onEnter: () => document.body.classList.add('isDropping'),
         onLeave: () => document.body.classList.remove('isDropping')
     });
+    */
 
     // Browsers require a user gesture to resume the AudioContext. We also start
     // a looping silent <audio> on the same gesture so iOS promotes the page to

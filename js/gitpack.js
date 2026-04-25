@@ -151,12 +151,9 @@ export async function readObjectAt(pack, offset, ctx) {
         sliceBytes = pack.bytes.subarray(offset, objEnd);
     } else {
         const file = await pack.getFile();
-        const blob = file.slice(offset, objEnd);
-        // Use the cascading reader if available (handles Chrome's NotReadableError
-        // quirks by trying multiple Blob-reading code paths).
-        sliceBytes = ctx.readBlobBytes
-            ? await ctx.readBlobBytes(blob)
-            : new Uint8Array(await blob.arrayBuffer());
+        // Direct slice + arrayBuffer — the diagnostic confirmed this is the cleanest
+        // path that doesn't trip Chrome's OOM heuristic via fallback buffers.
+        sliceBytes = new Uint8Array(await file.slice(offset, objEnd).arrayBuffer());
     }
     const hdr = readObjectHeader(sliceBytes, 0);
     const typeName = OBJ_TYPE[hdr.type];
@@ -288,56 +285,66 @@ export async function readLooseObject(fs, gitdir, oid) {
 }
 
 // -------- Ref loading --------
-// Returns { refs: { name → oid }, tips: oid[] }. Handles packed-refs + loose refs + HEAD.
+// Uses iterator-based directory access (matching the file-read diagnostic) to avoid the
+// many parent.getFileHandle(name) re-lookup calls that seem to make Chrome's FSA refuse
+// subsequent pack reads on certain repos.
 export async function readAllRefs(fs, gitdir) {
     const refs = Object.create(null);
+    const decode = (buf) => new TextDecoder().decode(buf);
 
-    // packed-refs file: mix of "<oid> <ref>" and peeled "^<oid>" lines. Ignore peeled; tag
-    // refs pointing at tag objects are handled later by dereferencing the tag.
-    try {
-        const text = await fs.readFile(`${gitdir}/packed-refs`, 'utf8');
-        for (const rawLine of text.split('\n')) {
-            const line = rawLine.trim();
-            if (!line || line.startsWith('#') || line.startsWith('^')) continue;
-            const sp = line.indexOf(' ');
-            if (sp < 0) continue;
-            const oid = line.slice(0, sp);
-            const ref = line.slice(sp + 1);
-            if (/^[0-9a-f]{40}$/.test(oid)) refs[ref] = oid;
-        }
-    } catch (_) {}
-
-    // Loose refs under refs/heads and refs/tags (plus refs/remotes if we want those too).
-    async function walk(subdir, prefix) {
-        let entries;
-        try { entries = await fs.readdir(`${gitdir}/${subdir}`); }
+    // Recursively walk a refs subdir using iterDirectory. Each file's bytes come from
+    // the iterator-cached File, no path-based re-lookup.
+    async function walkRefs(relDir, prefix) {
+        let entries = [];
+        try { entries = await fs.iterDirectory(`${gitdir}/${relDir}`); }
         catch (_) { return; }
-        for (const name of entries) {
-            const full = `${subdir}/${name}`;
-            let st;
-            try { st = await fs.stat(`${gitdir}/${full}`); } catch (_) { continue; }
-            if (st.isDirectory()) {
-                await walk(full, prefix + name + '/');
-            } else {
+        for (const e of entries) {
+            if (e.kind === 'directory') {
+                await walkRefs(`${relDir}/${e.name}`, `${prefix}${e.name}/`);
+            } else if (e.kind === 'file') {
                 try {
-                    const oid = (await fs.readFile(`${gitdir}/${full}`, 'utf8')).trim();
-                    if (/^[0-9a-f]{40}$/.test(oid)) refs[prefix + name] = oid;
+                    const file = await e.getFile();
+                    const text = decode(new Uint8Array(await file.arrayBuffer())).trim();
+                    if (/^[0-9a-f]{40}$/.test(text)) refs[`${prefix}${e.name}`] = text;
                 } catch (_) {}
             }
         }
     }
-    await walk('refs/heads', 'refs/heads/');
-    await walk('refs/tags', 'refs/tags/');
-    await walk('refs/remotes', 'refs/remotes/');
+    await walkRefs('refs/heads', 'refs/heads/');
+    await walkRefs('refs/tags', 'refs/tags/');
+    await walkRefs('refs/remotes', 'refs/remotes/');
 
-    // HEAD (possibly a symref)
+    // packed-refs and HEAD live at the top of gitdir. Iterate the gitdir once, find them.
     try {
-        const head = (await fs.readFile(`${gitdir}/HEAD`, 'utf8')).trim();
-        if (head.startsWith('ref: ')) {
-            const target = head.slice(5).trim();
-            if (refs[target]) refs['HEAD'] = refs[target];
-        } else if (/^[0-9a-f]{40}$/.test(head)) {
-            refs['HEAD'] = head;
+        const top = await fs.iterDirectory(gitdir);
+        for (const e of top) {
+            if (e.kind !== 'file') continue;
+            if (e.name === 'packed-refs') {
+                try {
+                    const file = await e.getFile();
+                    const text = decode(new Uint8Array(await file.arrayBuffer()));
+                    for (const rawLine of text.split('\n')) {
+                        const line = rawLine.trim();
+                        if (!line || line.startsWith('#') || line.startsWith('^')) continue;
+                        const sp = line.indexOf(' ');
+                        if (sp < 0) continue;
+                        const oid = line.slice(0, sp);
+                        const name = line.slice(sp + 1);
+                        if (/^[0-9a-f]{40}$/.test(oid)) refs[name] = oid;
+                    }
+                } catch (_) {}
+            } else if (e.name === 'HEAD') {
+                try {
+                    const file = await e.getFile();
+                    const head = decode(new Uint8Array(await file.arrayBuffer())).trim();
+                    if (head.startsWith('ref: ')) {
+                        const target = head.slice(5).trim();
+                        if (refs[target]) refs['HEAD'] = refs[target];
+                    } else if (/^[0-9a-f]{40}$/.test(head)) {
+                        refs['HEAD'] = head;
+                    }
+                } catch (_) {}
+            }
         }
     } catch (_) {}
 
@@ -424,34 +431,33 @@ function extractInterestingBytes(packBytes, oidToOffset, endOf) {
 // and sliced per-object inside readObjectAt — we never hold a 500MB pack in RAM.
 export async function loadPacks(fs, gitdir, onProgress) {
     const packDir = `${gitdir}/objects/pack`;
-    let entries = [];
-    try { entries = await fs.readdir(packDir); } catch (_) { return { oidToPack: new Map(), packs: [], failed: [] }; }
+    // Use iterator-based directory access (.values() under the hood). This pattern
+    // succeeds where path-based re-lookup (parent.getFileHandle(name)) fails, per the
+    // file-read diagnostic at /diag/. Each iter entry's .getFile() works reliably.
+    let dirEntries = [];
+    try { dirEntries = await fs.iterDirectory(packDir); }
+    catch (_) { return { oidToPack: new Map(), packs: [], failed: [] }; }
+    const handlesByName = new Map();
+    for (const e of dirEntries) {
+        if (e.kind === 'file') handlesByName.set(e.name, e);
+    }
     const oidToPack = new Map();
     const packs = [];
     const failed = [];
     let packId = 0;
-    for (const name of entries) {
+    for (const [name, idxEntry] of handlesByName) {
         if (!name.endsWith('.idx')) continue;
         const base = name.slice(0, -4);
+        const packEntry = handlesByName.get(base + '.pack');
+        if (!packEntry) continue;
         const idxPath = `${packDir}/${name}`;
         const packPath = `${packDir}/${base}.pack`;
         try {
-            // Read idx (with retries). idx is small; we always need it.
-            let idxBuf = null, fh = null;
-            for (let attempt = 0; attempt < 3; attempt++) {
-                try {
-                    idxBuf = await fs.readFile(idxPath);
-                    fh = await fs.getFileHandle(packPath);
-                    break;
-                } catch (e) {
-                    if (attempt === 2) throw e;
-                    if (typeof fs.invalidate === 'function') {
-                        fs.invalidate(idxPath);
-                        fs.invalidate(packPath);
-                    }
-                    await new Promise(r => setTimeout(r, 150));
-                }
-            }
+            // Use the strong File ref on the entry — kept alive so Chrome doesn't GC it
+            // between iteration and read.
+            const idxFile = idxEntry.file || await idxEntry.getFile();
+            const idxBuf = new Uint8Array(await idxFile.arrayBuffer());
+            const fh = packEntry;
             const sizeProbe = await fh.getFile();
             const { oidToOffset } = parseIdx(idxBuf);
             // Free the idx buffer from the adapter cache — we've extracted everything we
@@ -468,16 +474,14 @@ export async function loadPacks(fs, gitdir, onProgress) {
             const thisPackId = packId++;
             // Try to read the whole pack into memory *only* if it's small enough that
             // concatenating into a single Uint8Array is safe. A 500MB pack file via
-            // arrayBuffer() or stream()-then-concat allocates 500MB contiguously and
-            // crashes Chrome. For big packs we go straight to per-object streaming.
+            // arrayBuffer() allocates 500MB contiguously and crashes Chrome's heuristic.
+            // For big packs we go straight to per-object streaming.
             const WHOLE_PACK_LIMIT = 80 * 1024 * 1024;
             let trimmedBytes = null;
-            const probeFile = await fh.getFile();
+            const probeFile = packEntry.file || await fh.getFile();
             if (probeFile.size < WHOLE_PACK_LIMIT) {
                 try {
-                    let packBytes = typeof fs.readBlobBytes === 'function'
-                        ? await fs.readBlobBytes(probeFile)
-                        : new Uint8Array(await probeFile.arrayBuffer());
+                    let packBytes = new Uint8Array(await probeFile.arrayBuffer());
                     const origSize = packBytes.length;
                     trimmedBytes = extractInterestingBytes(packBytes, oidToOffset, endOf);
                     let trimmedSize = 0;
@@ -527,14 +531,17 @@ export async function loadPacks(fs, gitdir, onProgress) {
 // -------- Fast commit walk --------
 // Returns [{ sha, parents, author, email, date, message }, ...] newest-first.
 export async function fastWalk({ fs, gitdir, onProgress = () => {}, maxCommits = 500000, yieldEvery = 500 }) {
-    onProgress('Reading refs…');
-    const { refs, tips } = await readAllRefs(fs, gitdir);
-
+    // Load packs FIRST. Reading lots of ref files first (~500 on a branchy repo) seems
+    // to put Chrome's FSA into a state where subsequent pack reads fail with
+    // NotReadableError. The diagnostic at /diag/ confirmed pack reads work in isolation.
     onProgress('Loading pack indexes…');
     const { oidToPack, failed } = await loadPacks(fs, gitdir, onProgress);
     if (failed && failed.length) {
         onProgress(`${failed.length} pack${failed.length === 1 ? '' : 's'} unreadable — history may be incomplete. Use the git-log one-liner for a full walk.`);
     }
+
+    onProgress('Reading refs…');
+    const { refs, tips } = await readAllRefs(fs, gitdir);
 
     const commits = new Map();      // oid → parsed commit
     const dereffed = new Set();     // oids we've attempted, to short-circuit
