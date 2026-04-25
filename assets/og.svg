@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b0e14"/>
+      <stop offset="1" stop-color="#121720"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+
+  <!-- Subtle grid -->
+  <g stroke="#1a2030" stroke-width="1">
+    <line x1="0" y1="280" x2="1200" y2="280"/>
+    <line x1="0" y1="320" x2="1200" y2="320"/>
+    <line x1="0" y1="360" x2="1200" y2="360"/>
+    <line x1="0" y1="400" x2="1200" y2="400"/>
+    <line x1="0" y1="440" x2="1200" y2="440"/>
+    <line x1="0" y1="480" x2="1200" y2="480"/>
+    <line x1="0" y1="520" x2="1200" y2="520"/>
+  </g>
+
+  <!-- Git graph: main rail (pink) + bell rail (green) + 4 dives -->
+  <!-- Main pink rail -->
+  <line x1="60" y1="320" x2="1140" y2="320" stroke="#ff8ac3" stroke-width="3" stroke-linecap="round" opacity="0.85"/>
+  <!-- Bell green rail -->
+  <line x1="180" y1="360" x2="1080" y2="360" stroke="#9dff8a" stroke-width="3" stroke-linecap="round" opacity="0.85"/>
+
+  <!-- Dive 1: orange branch -->
+  <path d="M 220 360 C 260 360, 260 480, 320 480 L 420 480 C 480 480, 480 360, 520 360"
+        stroke="#ffc07a" stroke-width="3" fill="none" stroke-linecap="round" opacity="0.85"/>
+  <!-- Dive 2: blue branch -->
+  <path d="M 540 320 C 580 320, 580 520, 640 520 L 720 520 C 780 520, 780 320, 820 320"
+        stroke="#8ab4ff" stroke-width="3" fill="none" stroke-linecap="round" opacity="0.85"/>
+  <!-- Dive 3: purple branch -->
+  <path d="M 860 360 C 900 360, 900 440, 940 440 L 1000 440 C 1040 440, 1040 360, 1060 360"
+        stroke="#c890ff" stroke-width="3" fill="none" stroke-linecap="round" opacity="0.85"/>
+
+  <!-- Dots on main rail (pink) -->
+  <g fill="#ff8ac3">
+    <circle cx="120" cy="320" r="6"/>
+    <circle cx="180" cy="320" r="6"/>
+    <circle cx="280" cy="320" r="6"/>
+    <circle cx="380" cy="320" r="6"/>
+    <circle cx="540" cy="320" r="6"/>
+    <circle cx="680" cy="320" r="6"/>
+    <circle cx="820" cy="320" r="6"/>
+    <circle cx="940" cy="320" r="6"/>
+    <circle cx="1080" cy="320" r="6"/>
+  </g>
+  <!-- Dots on bell rail (green) -->
+  <g fill="#9dff8a">
+    <circle cx="220" cy="360" r="6"/>
+    <circle cx="320" cy="360" r="6"/>
+    <circle cx="520" cy="360" r="6"/>
+    <circle cx="640" cy="360" r="6"/>
+    <circle cx="780" cy="360" r="6"/>
+    <circle cx="860" cy="360" r="6"/>
+    <circle cx="1060" cy="360" r="6"/>
+  </g>
+  <!-- Branch dots -->
+  <g>
+    <circle cx="320" cy="480" r="6" fill="#ffc07a"/>
+    <circle cx="420" cy="480" r="6" fill="#ffc07a"/>
+    <circle cx="640" cy="520" r="6" fill="#8ab4ff"/>
+    <circle cx="720" cy="520" r="6" fill="#8ab4ff"/>
+    <circle cx="940" cy="440" r="6" fill="#c890ff"/>
+    <circle cx="1000" cy="440" r="6" fill="#c890ff"/>
+  </g>
+
+  <!-- Title block (top) -->
+  <g font-family="-apple-system, system-ui, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+    <text x="60" y="160" font-size="156" font-weight="800" fill="#e6ecf2" letter-spacing="-2">rebass</text>
+    <text x="60" y="220" font-size="40" font-weight="500" fill="#8ab4ff">Music from a git history.</text>
+  </g>
+
+  <!-- Footer -->
+  <g font-family="ui-monospace, 'SF Mono', Menlo, monospace">
+    <text x="60" y="595" font-size="22" fill="#5a6478">github.com/adamf/rebass</text>
+  </g>
+</svg>
